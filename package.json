@@ -1,0 +1,25 @@
+{
+  "name": "@neuronsearchlab/sdk",
+  "version": "1.0.0",
+  "description": "Official SDK for accessing NeuronSearchLab APIs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "author": "NeuronSearchLab",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+  "access": "public"
+  }
+}

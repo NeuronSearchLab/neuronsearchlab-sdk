@@ -1,0 +1,51 @@
+name: Release SDK to NPM
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'tsconfig.json'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org/'
+          scope: '@neuronsearchlab'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run build
+        run: npm run build
+
+      - name: Bump version & publish
+        uses: JS-DevTools/npm-publish@v3
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          tag: latest
+          access: public
+          strategy: all
+
+      - name: Push version bump to Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git push --follow-tags origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
