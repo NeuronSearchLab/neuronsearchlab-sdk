@@ -1,5 +1,5 @@
 {
-  "name": "@neuronsearchlab/sdk",
+  "name": "@neuronsearchlab-sdk",
   "version": "1.0.0",
   "description": "Official SDK for accessing NeuronSearchLab APIs",
   "main": "dist/index.js",
