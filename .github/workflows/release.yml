@@ -30,7 +30,7 @@ jobs:
       - name: Run build
         run: npm run build
 
-      - name: Bump version & publish
+      - name: Bump versions & publish
         uses: JS-DevTools/npm-publish@v3
         with:
           token: ${{ secrets.NPM_TOKEN }}
