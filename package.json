@@ -14,12 +14,15 @@
   "scripts": {
     "build": "tsc"
   },
+  "files": [
+    "dist"
+  ],
   "author": "NeuronSearchLab",
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.8.3"
   },
   "publishConfig": {
-  "access": "public"
+    "access": "public"
   }
 }
