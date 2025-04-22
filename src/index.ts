@@ -76,12 +76,19 @@ export class NeuronSDK {
   }
 
   /**
-   * Get recommendations for a user
-   * GET /recommendation?user_id=...
+   * Get recommendations for a user, optionally with a context ID
+   * GET /recommendations?user_id=...&context_id=...
    */
-  public async getRecommendations(userId: string): Promise<any> {
-    const url = new URL(`${this.baseUrl}/recommendation`);
+  public async getRecommendations(options: {
+    userId: string;
+    contextId?: string;
+  }): Promise<any> {
+    const {userId, contextId} = options;
+    const url = new URL(`${this.baseUrl}/recommendations`);
     url.searchParams.append("user_id", userId);
+    if (contextId) {
+      url.searchParams.append("context_id", contextId);
+    }
 
     const res = await fetch(url.toString(), {
       method: "GET",
