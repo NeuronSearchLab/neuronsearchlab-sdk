@@ -133,15 +133,6 @@ npm run build
 
 ---
 
-## 📦 Publishing (internal use)
-
-```bash
-npm version patch    # bump version (semver)
-npm publish --access public
-```
-
----
-
 ## 🪪 License
 
 MIT © [NeuronSearchLab](https://neuronsearchlab.com)
