@@ -1,3 +1,5 @@
+export { configureLogger, logger } from "./logger";
+export type { LogLevel, LoggerConfig, StructuredLogEntry, LoggerTransport } from "./logger";
 export type SDKConfig = {
     baseUrl: string;
     accessToken: string;
@@ -28,7 +30,7 @@ export declare class SDKTimeoutError extends Error {
 }
 export type TrackEventPayload = {
     eventId: number;
-    userId: number;
+    userId: number | string;
     itemId: number;
     metadata: Record<string, any>;
 };
@@ -39,7 +41,7 @@ export type ItemUpsertPayload = {
     metadata: Record<string, any>;
 };
 export type RecommendationOptions = {
-    userId: number;
+    userId: number | string;
     contextId?: string;
     limit?: number;
 };

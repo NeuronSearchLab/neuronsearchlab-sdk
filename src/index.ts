@@ -1,5 +1,10 @@
 // src/index.ts
 
+import {logger} from "./logger";
+
+export {configureLogger, logger} from "./logger";
+export type {LogLevel, LoggerConfig, StructuredLogEntry, LoggerTransport} from "./logger";
+
 export type SDKConfig = {
   baseUrl: string; // e.g. https://api.neuronsearchlab.com/v1
   accessToken: string; // Bearer token
@@ -43,7 +48,7 @@ export class SDKTimeoutError extends Error {
 // -------- Domain payloads (numeric IDs, as you specified) --------
 export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
-  userId: number;
+  userId: number | string;
   itemId: number;
   metadata: Record<string, any>;
 };
@@ -56,7 +61,7 @@ export type ItemUpsertPayload = {
 };
 
 export type RecommendationOptions = {
-  userId: number;
+  userId: number | string;
   contextId?: string;
   limit?: number;
 };
@@ -117,6 +122,7 @@ export class NeuronSDK {
     pathOrUrl: string,
     init: RequestInit & {retryOn?: number[]} = {}
   ): Promise<T> {
+    const method = init.method ?? "GET";
     const isAbs = /^https?:\/\//i.test(pathOrUrl);
     const url = isAbs
       ? pathOrUrl
@@ -124,10 +130,27 @@ export class NeuronSDK {
 
     const retryOn = init.retryOn ?? [429, 500, 502, 503, 504];
     let attempt = 0;
+    const requestId =
+      logger.shouldLog("DEBUG") || logger.isPerformanceLoggingEnabled()
+        ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+        : undefined;
 
     while (true) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      const startTime = logger.isPerformanceLoggingEnabled() ? Date.now() : 0;
+
+      if (logger.shouldLog("DEBUG")) {
+        logger.debug("HTTP request attempt", {
+          method,
+          url,
+          attempt,
+          maxRetries: this.maxRetries,
+          retryOn,
+          requestId,
+          requestBody: typeof init.body === "string" ? init.body : undefined,
+        });
+      }
 
       try {
         const res = await this.fetchImpl(url, {
@@ -135,9 +158,28 @@ export class NeuronSDK {
           signal: controller.signal,
         });
         clearTimeout(timeout);
+        const durationMs = startTime ? Date.now() - startTime : undefined;
 
         if (res.ok) {
           const text = await res.text();
+          if (logger.shouldLog("DEBUG")) {
+            logger.debug("HTTP response received", {
+              method,
+              url,
+              attempt,
+              status: res.status,
+              requestId,
+              durationMs,
+            });
+          }
+          if (text && logger.shouldLog("TRACE")) {
+            logger.trace("HTTP response payload", {
+              method,
+              url,
+              requestId,
+              responseBody: text,
+            });
+          }
           if (!text) return undefined as unknown as T;
           try {
             return JSON.parse(text) as T;
@@ -147,6 +189,18 @@ export class NeuronSDK {
         }
 
         const raw = await res.text().catch(() => "");
+        if (logger.shouldLog("WARN")) {
+          logger.warn("HTTP response not OK", {
+            method,
+            url,
+            attempt,
+            status: res.status,
+            statusText: res.statusText,
+            requestId,
+            durationMs,
+            responseBody: raw,
+          });
+        }
         let body: APIErrorBody | string | undefined;
         try {
           body = raw ? (JSON.parse(raw) as APIErrorBody) : undefined;
@@ -161,12 +215,22 @@ export class NeuronSDK {
             retryAfter && !Number.isNaN(Number(retryAfter))
               ? Number(retryAfter) * 1000
               : this.backoffMs(attempt);
+          if (logger.shouldLog("INFO")) {
+            logger.info("Retrying request after HTTP status", {
+              method,
+              url,
+              attempt,
+              status: res.status,
+              delayMs: delay,
+              requestId,
+            });
+          }
           await this.sleep(delay);
           continue;
         }
 
         const msg = `HTTP ${res.status} ${res.statusText} for ${
-          init.method ?? "GET"
+          method
         } ${url}`;
         throw new SDKHttpError(msg, {
           status: res.status,
@@ -179,18 +243,50 @@ export class NeuronSDK {
         if (err?.name === "AbortError") {
           if (attempt < this.maxRetries) {
             attempt++;
+            if (logger.shouldLog("WARN")) {
+              logger.warn("Retrying request after timeout", {
+                method,
+                url,
+                attempt,
+                timeoutMs: this.timeoutMs,
+                requestId,
+              });
+            }
             await this.sleep(this.backoffMs(attempt));
             continue;
           }
+          logger.error("Request aborted after max retries", {
+            method,
+            url,
+            attempts: attempt,
+            timeoutMs: this.timeoutMs,
+            requestId,
+          });
           throw new SDKTimeoutError(this.timeoutMs);
         }
 
         // transient network errors
         if (attempt < this.maxRetries) {
           attempt++;
+          if (logger.shouldLog("WARN")) {
+            logger.warn("Retrying request after network error", {
+              method,
+              url,
+              attempt,
+              error: err?.message,
+              requestId,
+            });
+          }
           await this.sleep(this.backoffMs(attempt));
           continue;
         }
+        logger.error("Request failed", {
+          method,
+          url,
+          attempts: attempt,
+          error: err?.message,
+          requestId,
+        });
         throw err;
       }
     }
@@ -220,10 +316,10 @@ export class NeuronSDK {
     if (
       !data ||
       typeof data.eventId !== "number" ||
-      typeof data.userId !== "number" ||
+      (typeof data.userId !== "number" && typeof data.userId !== "string") ||
       typeof data.itemId !== "number"
     ) {
-      throw new Error("eventId, userId, and itemId are required numbers");
+      throw new Error("eventId and itemId must be numbers; userId must be a string or number");
     }
 
     return this.request<T>("/events", {
@@ -264,7 +360,9 @@ export class NeuronSDK {
     options: RecommendationOptions
   ): Promise<T> {
     const {userId, contextId, limit} = options;
-    if (typeof userId !== "number") throw new Error("userId must be a number");
+    if (typeof userId !== "number" && typeof userId !== "string") {
+      throw new Error("userId must be a string or number");
+    }
 
     const url = new URL(`${this.baseUrl}/recommendations`);
     url.searchParams.set("user_id", String(userId));
