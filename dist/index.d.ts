@@ -31,7 +31,7 @@ export declare class SDKTimeoutError extends Error {
 export type TrackEventPayload = {
     eventId: number;
     userId: number | string;
-    itemId: number;
+    itemId: number | string;
     metadata: Record<string, any>;
 };
 export type ItemUpsertPayload = {

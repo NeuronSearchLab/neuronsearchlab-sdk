@@ -49,7 +49,7 @@ export class SDKTimeoutError extends Error {
 export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
   userId: number | string;
-  itemId: number;
+  itemId: number | string; // allow UUIDs or numeric IDs
   metadata: Record<string, any>;
 };
 
