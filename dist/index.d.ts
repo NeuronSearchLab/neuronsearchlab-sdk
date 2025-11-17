@@ -32,7 +32,6 @@ export type TrackEventPayload = {
     eventId: number;
     userId: number | string;
     itemId: number | string;
-    metadata: Record<string, any>;
 };
 export type ItemUpsertPayload = {
     itemId: number;
