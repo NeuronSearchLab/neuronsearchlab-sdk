@@ -50,7 +50,6 @@ export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
   userId: number | string;
   itemId: number | string; // allow UUIDs or numeric IDs
-  metadata: Record<string, any>;
 };
 
 export type ItemUpsertPayload = {
