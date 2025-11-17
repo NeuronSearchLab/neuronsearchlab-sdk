@@ -17,12 +17,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Ensure clean working tree
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org/'
           scope: '@neuronsearchlab'
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Bump package version
+        run: npm version minor
 
       - name: Install dependencies
         run: npm install
@@ -37,9 +50,6 @@ jobs:
           access: public
 
       - name: Push version bump to Git
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git push --follow-tags origin main
+        run: git push --follow-tags origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
