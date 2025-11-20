@@ -36,6 +36,8 @@ await sdk.upsertItem({
   metadata: {league: "EPL"},
 });
 
+await sdk.deleteItems({itemId: contentId});
+
 const recs = await sdk.getRecommendations({userId: "42", limit: 5});
 ```
 
@@ -54,7 +56,8 @@ const recs = await sdk.getRecommendations({userId: "42", limit: 5});
 | Method | Required fields | Notes |
 | --- | --- | --- |
 | `trackEvent(data)` | `eventId` (number), `userId` (string or number), `itemId` (number), `metadata` (object) | For each tracked occurrence; pass your integer contentId via `itemId`. |
-| `upsertItem(data)` | `itemId` (number), `name`, `description`, `metadata` | Adds or updates catalogue entries. |
+| `upsertItem(data)` | `itemId` (number or UUID string), `name`, `description`, `metadata` | Adds or updates catalogue entries. |
+| `deleteItems(items)` | `itemId` (number or UUID string) | Accepts a single `{itemId}` object or an array for batch deletes. |
 | `getRecommendations(options)` | `userId` (string or number) | Optional: `contextId` (string), `limit` (number). |
 
 ## Development

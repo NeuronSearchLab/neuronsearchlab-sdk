@@ -254,6 +254,28 @@ export class NeuronSDK {
         });
     }
     /**
+     * Delete one or more items.
+     * DELETE /items
+     */
+    async deleteItems(items) {
+        const payload = Array.isArray(items) ? items : [items];
+        if (payload.length === 0 ||
+            payload.some((entry) => {
+                const id = entry?.itemId;
+                const isValidString = typeof id === "string" && id.trim().length > 0;
+                const isValidPositiveInteger = typeof id === "number" && Number.isInteger(id) && id > 0;
+                return !(isValidString || isValidPositiveInteger);
+            })) {
+            throw new Error("itemId is required and must be a UUID string or positive integer");
+        }
+        const body = payload.length === 1 ? payload[0] : payload;
+        return this.request("/items", {
+            method: "DELETE",
+            headers: this.getHeaders(),
+            body: JSON.stringify(body),
+        });
+    }
+    /**
      * Get recommendations for a user, optionally with a context ID and limit
      * GET /recommendations?user_id=...&context_id=...&limit=...
      */
