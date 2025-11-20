@@ -34,7 +34,7 @@ export type TrackEventPayload = {
     itemId: number | string;
 };
 export type ItemUpsertPayload = {
-    itemId: number;
+    itemId: number | string;
     name: string;
     description: string;
     metadata: Record<string, any>;
@@ -43,6 +43,16 @@ export type RecommendationOptions = {
     userId: number | string;
     contextId?: string;
     limit?: number;
+};
+export type DeleteItemInput = {
+    itemId: string | number;
+};
+export type DeleteItemsResponse = {
+    message: string;
+    itemId?: string | number;
+    itemIds: Array<string | number>;
+    deletedCount?: number;
+    processing_time_ms?: number;
 };
 export type Recommendation = {
     itemId: number | string;
@@ -86,8 +96,13 @@ export declare class NeuronSDK {
      */
     upsertItem<T = {
         success: true;
-        itemId: number;
+        itemId: number | string;
     }>(data: ItemUpsertPayload): Promise<T>;
+    /**
+     * Delete one or more items.
+     * DELETE /items
+     */
+    deleteItems<T = DeleteItemsResponse>(items: DeleteItemInput | DeleteItemInput[]): Promise<T>;
     /**
      * Get recommendations for a user, optionally with a context ID and limit
      * GET /recommendations?user_id=...&context_id=...&limit=...

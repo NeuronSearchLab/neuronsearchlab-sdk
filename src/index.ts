@@ -45,7 +45,7 @@ export class SDKTimeoutError extends Error {
   }
 }
 
-// -------- Domain payloads (numeric IDs, as you specified) --------
+// -------- Domain payloads --------
 export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
   userId: number | string;
@@ -53,7 +53,7 @@ export type TrackEventPayload = {
 };
 
 export type ItemUpsertPayload = {
-  itemId: number;
+  itemId: number | string; // allow UUIDs or numeric IDs
   name: string;
   description: string;
   metadata: Record<string, any>;
@@ -63,6 +63,18 @@ export type RecommendationOptions = {
   userId: number | string;
   contextId?: string;
   limit?: number;
+};
+
+export type DeleteItemInput = {
+  itemId: string | number;
+};
+
+export type DeleteItemsResponse = {
+  message: string;
+  itemId?: string | number;
+  itemIds: Array<string | number>;
+  deletedCount?: number;
+  processing_time_ms?: number;
 };
 
 // Example response shape; feel free to replace/extend with your real types
@@ -341,13 +353,44 @@ export class NeuronSDK {
    * Create or update an item
    * POST /items
    */
-  public async upsertItem<T = {success: true; itemId: number}>(
+  public async upsertItem<T = {success: true; itemId: number | string}>(
     data: ItemUpsertPayload
   ): Promise<T> {
     return this.request<T>("/items", {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Delete one or more items.
+   * DELETE /items
+   */
+  public async deleteItems<T = DeleteItemsResponse>(
+    items: DeleteItemInput | DeleteItemInput[]
+  ): Promise<T> {
+    const payload = Array.isArray(items) ? items : [items];
+
+    if (
+      payload.length === 0 ||
+      payload.some((entry) => {
+        const id = entry?.itemId;
+        const isValidString = typeof id === "string" && id.trim().length > 0;
+        const isValidPositiveInteger =
+          typeof id === "number" && Number.isInteger(id) && id > 0;
+        return !(isValidString || isValidPositiveInteger);
+      })
+    ) {
+      throw new Error("itemId is required and must be a UUID string or positive integer");
+    }
+
+    const body = payload.length === 1 ? payload[0] : payload;
+
+    return this.request<T>("/items", {
+      method: "DELETE",
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
     });
   }
 
