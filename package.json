@@ -2,18 +2,19 @@
   "name": "@neuronsearchlab/sdk",
   "version": "1.9.0",
   "description": "Official SDK for accessing NeuronSearchLab APIs",
-  "main": "dist/index.js",
+  "type": "module",
+  "main": "dist/index.cjs",
   "types": "dist/index.d.ts",
-  "module": "dist/index.js",
+  "module": "dist/index.mjs",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
       "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsup"
   },
   "files": [
     "dist"
@@ -21,6 +22,7 @@
   "author": "NeuronSearchLab",
   "license": "MIT",
   "devDependencies": {
+    "tsup": "^8.3.5",
     "typescript": "^5.8.3"
   },
   "publishConfig": {
