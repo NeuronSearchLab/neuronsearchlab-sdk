@@ -342,7 +342,9 @@ var NeuronSDK = class {
    */
   async trackEvent(data) {
     if (!data || typeof data.eventId !== "number" || typeof data.userId !== "number" && typeof data.userId !== "string" || typeof data.itemId !== "number") {
-      throw new Error("eventId and itemId must be numbers; userId must be a string or number");
+      throw new Error(
+        "eventId and itemId must be numbers; userId must be a string or number"
+      );
     }
     return this.request("/events", {
       method: "POST",
@@ -379,7 +381,9 @@ var NeuronSDK = class {
       const isValidPositiveInteger = typeof id === "number" && Number.isInteger(id) && id > 0;
       return !(isValidString || isValidPositiveInteger);
     })) {
-      throw new Error("itemId is required and must be a UUID string or positive integer");
+      throw new Error(
+        "itemId is required and must be a UUID string or positive integer"
+      );
     }
     const body = payload.length === 1 ? payload[0] : payload;
     return this.request("/items", {

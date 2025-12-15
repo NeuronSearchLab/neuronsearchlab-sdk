@@ -127,6 +127,35 @@ type DeleteItemsResponse = {
     deletedCount?: number;
     processing_time_ms?: number;
 };
+type RecommendationsResponse = {
+    message?: string;
+    embedding_info?: {
+        source: string;
+        used_default: boolean;
+        default_reason?: string | null;
+        dimension: number;
+        expected_dimension: number;
+        averaged_interactions?: number;
+    };
+    upserted_embedding_row?: {
+        tenant_id: string;
+        entity_id: string;
+        name: string;
+        description: string;
+        entity_type: string;
+        created_at: string;
+        last_modified: string;
+        embedding: string;
+    };
+    recommendations: Array<{
+        entity_id: string;
+        name: string;
+        description: string;
+        score: number;
+        metadata?: Record<string, any>;
+        embedding?: number[];
+    }>;
+};
 type Recommendation = {
     itemId: number | string;
     score?: number;
@@ -180,7 +209,7 @@ declare class NeuronSDK {
      * Get recommendations for a user, optionally with a context ID and limit
      * GET /recommendations?user_id=...&context_id=...&limit=...
      */
-    getRecommendations<T = Recommendation[]>(options: RecommendationOptions): Promise<T>;
+    getRecommendations(options: RecommendationOptions): Promise<RecommendationsResponse>;
 }
 
-export { type APIErrorBody, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type Recommendation, type RecommendationOptions, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };
+export { type APIErrorBody, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type Recommendation, type RecommendationOptions, type RecommendationsResponse, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };
