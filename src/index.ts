@@ -3,7 +3,12 @@
 import {logger} from "./logger";
 
 export {configureLogger, logger} from "./logger";
-export type {LogLevel, LoggerConfig, StructuredLogEntry, LoggerTransport} from "./logger";
+export type {
+  LogLevel,
+  LoggerConfig,
+  StructuredLogEntry,
+  LoggerTransport,
+} from "./logger";
 
 export type SDKConfig = {
   baseUrl: string; // e.g. https://api.neuronsearchlab.com/v1
@@ -77,7 +82,38 @@ export type DeleteItemsResponse = {
   processing_time_ms?: number;
 };
 
-// Example response shape; feel free to replace/extend with your real types
+// Updated response type to match API
+export type RecommendationsResponse = {
+  message?: string;
+  embedding_info?: {
+    source: string;
+    used_default: boolean;
+    default_reason?: string | null;
+    dimension: number;
+    expected_dimension: number;
+    averaged_interactions?: number;
+  };
+  upserted_embedding_row?: {
+    tenant_id: string;
+    entity_id: string;
+    name: string;
+    description: string;
+    entity_type: string;
+    created_at: string;
+    last_modified: string;
+    embedding: string;
+  };
+  recommendations: Array<{
+    entity_id: string;
+    name: string;
+    description: string;
+    score: number;
+    metadata?: Record<string, any>;
+    embedding?: number[];
+  }>;
+};
+
+// Legacy type for backwards compatibility
 export type Recommendation = {
   itemId: number | string;
   score?: number;
@@ -240,9 +276,7 @@ export class NeuronSDK {
           continue;
         }
 
-        const msg = `HTTP ${res.status} ${res.statusText} for ${
-          method
-        } ${url}`;
+        const msg = `HTTP ${res.status} ${res.statusText} for ${method} ${url}`;
         throw new SDKHttpError(msg, {
           status: res.status,
           statusText: res.statusText,
@@ -330,7 +364,9 @@ export class NeuronSDK {
       (typeof data.userId !== "number" && typeof data.userId !== "string") ||
       typeof data.itemId !== "number"
     ) {
-      throw new Error("eventId and itemId must be numbers; userId must be a string or number");
+      throw new Error(
+        "eventId and itemId must be numbers; userId must be a string or number"
+      );
     }
 
     return this.request<T>("/events", {
@@ -382,7 +418,9 @@ export class NeuronSDK {
         return !(isValidString || isValidPositiveInteger);
       })
     ) {
-      throw new Error("itemId is required and must be a UUID string or positive integer");
+      throw new Error(
+        "itemId is required and must be a UUID string or positive integer"
+      );
     }
 
     const body = payload.length === 1 ? payload[0] : payload;
@@ -398,9 +436,9 @@ export class NeuronSDK {
    * Get recommendations for a user, optionally with a context ID and limit
    * GET /recommendations?user_id=...&context_id=...&limit=...
    */
-  public async getRecommendations<T = Recommendation[]>(
+  public async getRecommendations(
     options: RecommendationOptions
-  ): Promise<T> {
+  ): Promise<RecommendationsResponse> {
     const {userId, contextId, limit} = options;
     if (typeof userId !== "number" && typeof userId !== "string") {
       throw new Error("userId must be a string or number");
@@ -411,7 +449,7 @@ export class NeuronSDK {
     if (contextId) url.searchParams.set("context_id", contextId);
     if (typeof limit === "number") url.searchParams.set("limit", String(limit));
 
-    return this.request<T>(url.toString(), {
+    return this.request<RecommendationsResponse>(url.toString(), {
       method: "GET",
       headers: this.getHeaders(),
     });
