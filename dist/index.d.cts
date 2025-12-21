@@ -79,6 +79,11 @@ type SDKConfig = {
     timeoutMs?: number;
     maxRetries?: number;
     fetchImpl?: typeof fetch;
+    collateWindowSeconds?: number;
+    maxBatchSize?: number;
+    maxBufferedEvents?: number;
+    maxEventRetries?: number;
+    disableArrayBatching?: boolean;
 };
 type APIErrorBody = {
     error?: string;
@@ -105,6 +110,7 @@ type TrackEventPayload = {
     eventId: number;
     userId: number | string;
     itemId: number | string;
+    [k: string]: unknown;
 };
 type ItemUpsertPayload = {
     itemId: number | string;
@@ -168,7 +174,20 @@ declare class NeuronSDK {
     private timeoutMs;
     private maxRetries;
     private fetchImpl;
+    private collateWindowMs;
+    private maxBatchSize;
+    private maxBufferedEvents;
+    private maxEventRetries;
+    private disableArrayBatching;
+    private eventBuffer;
+    private flushTimer;
+    private isFlushing;
+    private pendingFlushPromise;
+    private flushRetryCount;
+    private lifecycleListenersRegistered;
+    private arrayBatchingRejected;
     constructor(config: SDKConfig);
+    private registerLifecycleFlush;
     setAccessToken(token: string): void;
     setBaseUrl(url: string): void;
     setTimeout(ms: number): void;
@@ -176,6 +195,15 @@ declare class NeuronSDK {
     private request;
     private backoffMs;
     private sleep;
+    private scheduleFlush;
+    private trimBufferIfNeeded;
+    private enqueueEvent;
+    flushEvents(options?: {
+        useBeacon?: boolean;
+    }): Promise<void>;
+    private sendBatch;
+    private sendIndividually;
+    private postEvents;
     /**
      * Track an existing event occurrence.
      * This does NOT create event definitions; it records that a pre-defined event happened.

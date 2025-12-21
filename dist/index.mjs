@@ -146,6 +146,13 @@ var SDKTimeoutError = class extends Error {
 };
 var NeuronSDK = class {
   constructor(config) {
+    this.eventBuffer = [];
+    this.flushTimer = null;
+    this.isFlushing = false;
+    this.pendingFlushPromise = null;
+    this.flushRetryCount = 0;
+    this.lifecycleListenersRegistered = false;
+    this.arrayBatchingRejected = false;
     if (!config.baseUrl || !config.accessToken) {
       throw new Error("baseUrl and accessToken are required");
     }
@@ -154,10 +161,32 @@ var NeuronSDK = class {
     this.timeoutMs = config.timeoutMs ?? 1e4;
     this.maxRetries = config.maxRetries ?? 2;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+    this.collateWindowMs = (config.collateWindowSeconds ?? 3) * 1e3;
+    this.maxBatchSize = config.maxBatchSize ?? 200;
+    this.maxBufferedEvents = config.maxBufferedEvents ?? 5e3;
+    this.maxEventRetries = config.maxEventRetries ?? 5;
+    this.disableArrayBatching = Boolean(config.disableArrayBatching);
     if (!this.fetchImpl) {
       throw new Error(
         "fetch is not available in this environment. Provide config.fetchImpl (e.g., undici or node-fetch)."
       );
+    }
+    this.registerLifecycleFlush();
+  }
+  registerLifecycleFlush() {
+    if (this.lifecycleListenersRegistered) return;
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      const handler = () => {
+        void this.flushEvents({ useBeacon: true });
+      };
+      window.addEventListener("beforeunload", handler);
+      window.addEventListener("pagehide", handler);
+      window.addEventListener("visibilitychange", () => {
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+          handler();
+        }
+      });
+      this.lifecycleListenersRegistered = true;
     }
   }
   setAccessToken(token) {
@@ -334,6 +363,141 @@ var NeuronSDK = class {
   sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
   }
+  scheduleFlush(delayMs) {
+    if (this.flushTimer) {
+      if (typeof delayMs === "number") {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = setTimeout(() => void this.flushEvents(), delayMs);
+      }
+      return;
+    }
+    const waitMs = typeof delayMs === "number" ? delayMs : this.collateWindowMs;
+    this.flushTimer = setTimeout(() => void this.flushEvents(), waitMs);
+  }
+  trimBufferIfNeeded(incomingCount = 0) {
+    const overflow = this.eventBuffer.length + incomingCount - this.maxBufferedEvents;
+    if (overflow > 0) {
+      const dropped = this.eventBuffer.splice(0, overflow);
+      if (logger.shouldLog("WARN")) {
+        logger.warn("Dropping buffered events due to maxBufferedEvents limit", {
+          maxBufferedEvents: this.maxBufferedEvents,
+          dropped: overflow
+        });
+      }
+      dropped.forEach(
+        (evt) => evt.reject(
+          new Error("Event dropped because the buffer exceeded maxBufferedEvents")
+        )
+      );
+    }
+  }
+  enqueueEvent(payload) {
+    return new Promise((resolve, reject) => {
+      this.trimBufferIfNeeded(1);
+      this.eventBuffer.push({
+        payload,
+        resolve,
+        reject,
+        retries: 0,
+        enqueueTime: Date.now()
+      });
+      if (this.eventBuffer.length >= this.maxBatchSize) {
+        void this.flushEvents();
+      } else {
+        this.scheduleFlush();
+      }
+    });
+  }
+  async flushEvents(options = {}) {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.isFlushing || this.eventBuffer.length === 0) {
+      return this.pendingFlushPromise ?? Promise.resolve();
+    }
+    this.isFlushing = true;
+    const promise = (async () => {
+      while (this.eventBuffer.length > 0) {
+        const batch = this.eventBuffer.splice(0, this.maxBatchSize);
+        try {
+          const response = await this.sendBatch(batch, options);
+          batch.forEach((entry) => entry.resolve(response));
+          this.flushRetryCount = 0;
+        } catch (err) {
+          this.eventBuffer = batch.concat(this.eventBuffer);
+          this.trimBufferIfNeeded();
+          this.flushRetryCount += 1;
+          const willRetry = this.flushRetryCount <= this.maxEventRetries;
+          if (logger.shouldLog(willRetry ? "WARN" : "ERROR")) {
+            logger[willRetry ? "warn" : "error"](
+              willRetry ? "Failed to send events, scheduling retry" : "Dropping events after max retries",
+              {
+                attempt: this.flushRetryCount,
+                maxEventRetries: this.maxEventRetries,
+                error: err?.message,
+                bufferedCount: this.eventBuffer.length
+              }
+            );
+          }
+          if (willRetry) {
+            this.scheduleFlush(this.backoffMs(this.flushRetryCount));
+          } else {
+            const dropError = new Error(
+              "Max retries reached while sending buffered events"
+            );
+            batch.forEach((entry) => entry.reject(dropError));
+          }
+          break;
+        }
+      }
+    })();
+    this.pendingFlushPromise = promise.finally(() => {
+      this.isFlushing = false;
+      this.pendingFlushPromise = null;
+    });
+    return this.pendingFlushPromise;
+  }
+  async sendBatch(batch, options) {
+    const shouldSendArray = batch.length > 1 && !this.disableArrayBatching && !this.arrayBatchingRejected;
+    if (shouldSendArray) {
+      try {
+        return await this.postEvents(
+          batch.map((entry) => entry.payload),
+          options
+        );
+      } catch (err) {
+        if (!this.arrayBatchingRejected && err instanceof SDKHttpError) {
+          this.arrayBatchingRejected = true;
+          if (logger.shouldLog("WARN")) {
+            logger.warn("Array payload rejected, falling back to single-event sends", {
+              status: err.status,
+              statusText: err.statusText
+            });
+          }
+          return this.sendIndividually(batch, options);
+        }
+        throw err;
+      }
+    }
+    return this.sendIndividually(batch, options);
+  }
+  async sendIndividually(batch, options) {
+    let lastResponse;
+    for (const entry of batch) {
+      lastResponse = await this.postEvents(entry.payload, options);
+    }
+    return lastResponse;
+  }
+  async postEvents(payload, options) {
+    const body = JSON.stringify(payload);
+    return this.request("/events", {
+      method: "POST",
+      headers: this.getHeaders(),
+      body,
+      keepalive: Boolean(options.useBeacon)
+    });
+  }
   // ----------------- Public API -----------------
   /**
    * Track an existing event occurrence.
@@ -341,16 +505,16 @@ var NeuronSDK = class {
    * POST /events
    */
   async trackEvent(data) {
-    if (!data || typeof data.eventId !== "number" || typeof data.userId !== "number" && typeof data.userId !== "string" || typeof data.itemId !== "number") {
+    if (!data || typeof data.eventId !== "number" || typeof data.userId !== "number" && typeof data.userId !== "string" || typeof data.itemId !== "number" && typeof data.itemId !== "string") {
       throw new Error(
-        "eventId and itemId must be numbers; userId must be a string or number"
+        "eventId must be a number; userId and itemId must be a string or number"
       );
     }
-    return this.request("/events", {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const payload = {
+      ...data,
+      client_ts: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    return this.enqueueEvent(payload);
   }
   /**
    * @deprecated Use trackEvent(). Kept for backwards compatibility.
