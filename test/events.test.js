@@ -1,0 +1,168 @@
+import assert from "node:assert/strict";
+import {afterEach, beforeEach, test} from "node:test";
+
+import {NeuronSDK} from "../dist/index.cjs";
+
+const wait = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let originalWindow;
+let originalDocument;
+
+beforeEach(() => {
+  originalWindow = globalThis.window;
+  originalDocument = globalThis.document;
+});
+
+afterEach(() => {
+  if (originalWindow === undefined) {
+    delete globalThis.window;
+  } else {
+    globalThis.window = originalWindow;
+  }
+  if (originalDocument === undefined) {
+    delete globalThis.document;
+  } else {
+    globalThis.document = originalDocument;
+  }
+});
+
+test("batches events within collate window and preserves order", async () => {
+  const requests = [];
+  const sdk = new NeuronSDK({
+    baseUrl: "https://api.example.com/v1",
+    accessToken: "token",
+    collateWindowSeconds: 0.01,
+    maxBatchSize: 10,
+    fetchImpl: async (url, init) => {
+      requests.push({url, init});
+      return new Response(JSON.stringify({success: true}), {status: 200});
+    },
+  });
+
+  const p1 = sdk.trackEvent({eventId: 1, userId: "u1", itemId: "i1"});
+  const p2 = sdk.trackEvent({eventId: 2, userId: "u1", itemId: "i2"});
+
+  await Promise.all([p1, p2]);
+  assert.equal(requests.length, 1);
+
+  const body = JSON.parse(requests[0].init.body);
+  assert.equal(Array.isArray(body), true);
+  assert.equal(body.length, 2);
+  assert.equal(body[0].eventId, 1);
+  assert.equal(body[1].eventId, 2);
+  assert.ok(body[0].client_ts);
+  assert.ok(body[1].client_ts);
+});
+
+test("flushes immediately when maxBatchSize is reached", async () => {
+  const requests = [];
+  const sdk = new NeuronSDK({
+    baseUrl: "https://api.example.com/v1",
+    accessToken: "token",
+    collateWindowSeconds: 10,
+    maxBatchSize: 2,
+    fetchImpl: async (url, init) => {
+      requests.push({url, init});
+      return new Response(JSON.stringify({success: true}), {status: 200});
+    },
+  });
+
+  const p1 = sdk.trackEvent({eventId: 3, userId: "u1", itemId: "i3"});
+  const p2 = sdk.trackEvent({eventId: 4, userId: "u1", itemId: "i4"});
+
+  await Promise.all([p1, p2]);
+  assert.equal(requests.length, 1);
+  const body = JSON.parse(requests[0].init.body);
+  assert.equal(body.length, 2);
+});
+
+test("retries after network failure and re-queues events", async () => {
+  let attempts = 0;
+  const requests = [];
+  const sdk = new NeuronSDK({
+    baseUrl: "https://api.example.com/v1",
+    accessToken: "token",
+    collateWindowSeconds: 0,
+    maxBatchSize: 5,
+    maxEventRetries: 3,
+    fetchImpl: async (url, init) => {
+      attempts += 1;
+      requests.push({url, init, attempt: attempts});
+      if (attempts === 1) {
+        throw new Error("network down");
+      }
+      return new Response(JSON.stringify({success: true}), {status: 200});
+    },
+  });
+
+  // speed up retry backoff for test determinism
+  sdk.backoffMs = () => 5;
+
+  const p = sdk.trackEvent({eventId: 5, userId: "u1", itemId: "i5"});
+  await wait(20);
+  await p;
+
+  assert.equal(attempts, 2);
+  const body = JSON.parse(requests.at(-1).init.body);
+  const evt = Array.isArray(body) ? body[0] : body;
+  assert.equal(evt.eventId, 5);
+});
+
+test("preserves ordering across multiple batches", async () => {
+  const requests = [];
+  const sdk = new NeuronSDK({
+    baseUrl: "https://api.example.com/v1",
+    accessToken: "token",
+    collateWindowSeconds: 0,
+    maxBatchSize: 2,
+    fetchImpl: async (url, init) => {
+      requests.push({url, init});
+      return new Response(JSON.stringify({success: true}), {status: 200});
+    },
+  });
+
+  await Promise.all([
+    sdk.trackEvent({eventId: 10, userId: "u1", itemId: "i10"}),
+    sdk.trackEvent({eventId: 11, userId: "u1", itemId: "i11"}),
+    sdk.trackEvent({eventId: 12, userId: "u1", itemId: "i12"}),
+  ]);
+
+  assert.equal(requests.length, 2);
+  const firstBatch = JSON.parse(requests[0].init.body);
+  const secondBatch = JSON.parse(requests[1].init.body);
+  const normalize = (body) => (Array.isArray(body) ? body : [body]);
+  assert.deepEqual(
+    normalize(firstBatch).map((e) => e.eventId),
+    [10, 11]
+  );
+  assert.deepEqual(normalize(secondBatch).map((e) => e.eventId), [12]);
+});
+
+test("lifecycle flush triggers a send on pagehide", async () => {
+  const listeners = {};
+  globalThis.window = {
+    addEventListener: (name, handler) => {
+      listeners[name] = handler;
+    },
+  };
+  globalThis.document = {visibilityState: "visible"};
+
+  const requests = [];
+  const sdk = new NeuronSDK({
+    baseUrl: "https://api.example.com/v1",
+    accessToken: "token",
+    collateWindowSeconds: 5,
+    maxBatchSize: 10,
+    fetchImpl: async (url, init) => {
+      requests.push({url, init});
+      return new Response(JSON.stringify({success: true}), {status: 200});
+    },
+  });
+
+  const p = sdk.trackEvent({eventId: 20, userId: "u1", itemId: "i20"});
+  listeners.pagehide();
+  await Promise.all([p, wait(20)]);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].init.keepalive, true);
+});
