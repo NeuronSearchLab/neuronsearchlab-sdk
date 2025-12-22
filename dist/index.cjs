@@ -417,7 +417,9 @@ var NeuronSDK = class {
       }
       dropped.forEach(
         (evt) => evt.reject(
-          new Error("Event dropped because the buffer exceeded maxBufferedEvents")
+          new Error(
+            "Event dropped because the buffer exceeded maxBufferedEvents"
+          )
         )
       );
     }
@@ -501,10 +503,13 @@ var NeuronSDK = class {
         if (!this.arrayBatchingRejected && err instanceof SDKHttpError) {
           this.arrayBatchingRejected = true;
           if (logger.shouldLog("WARN")) {
-            logger.warn("Array payload rejected, falling back to single-event sends", {
-              status: err.status,
-              statusText: err.statusText
-            });
+            logger.warn(
+              "Array payload rejected, falling back to single-event sends",
+              {
+                status: err.status,
+                statusText: err.statusText
+              }
+            );
           }
           return this.sendIndividually(batch, options);
         }
@@ -589,7 +594,10 @@ var NeuronSDK = class {
   }
   /**
    * Get recommendations for a user, optionally with a context ID and limit
-   * GET /recommendations?user_id=...&context_id=...&limit=...
+   * GET /recommendations?user_id=...&context_id=...&quantity=...
+   *
+   * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
+   * and map it to `quantity` for backwards compatibility.
    */
   async getRecommendations(options) {
     const { userId, contextId, limit } = options;
@@ -599,7 +607,47 @@ var NeuronSDK = class {
     const url = new URL(`${this.baseUrl}/recommendations`);
     url.searchParams.set("user_id", String(userId));
     if (contextId) url.searchParams.set("context_id", contextId);
-    if (typeof limit === "number") url.searchParams.set("limit", String(limit));
+    if (typeof limit === "number")
+      url.searchParams.set("quantity", String(limit));
+    return this.request(url.toString(), {
+      method: "GET",
+      headers: this.getHeaders()
+    });
+  }
+  /**
+   * NEW: Get the next auto-generated recommendation section.
+   *
+   * Call this when the user scrolls and you want a new section appended.
+   * Pass the returned `next_cursor` back into the next call to continue the sequence.
+   *
+   * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+   */
+  async getAutoRecommendations(options) {
+    const {
+      userId,
+      contextId,
+      limit,
+      cursor,
+      windowDays,
+      candidateLimit,
+      servedCap
+    } = options;
+    if (typeof userId !== "number" && typeof userId !== "string") {
+      throw new Error("userId must be a string or number");
+    }
+    const url = new URL(`${this.baseUrl}/recommendations`);
+    url.searchParams.set("mode", "auto");
+    url.searchParams.set("user_id", String(userId));
+    if (contextId) url.searchParams.set("context_id", contextId);
+    if (typeof limit === "number")
+      url.searchParams.set("quantity", String(limit));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    if (typeof windowDays === "number")
+      url.searchParams.set("window_days", String(windowDays));
+    if (typeof candidateLimit === "number")
+      url.searchParams.set("candidate_limit", String(candidateLimit));
+    if (typeof servedCap === "number")
+      url.searchParams.set("served_cap", String(servedCap));
     return this.request(url.toString(), {
       method: "GET",
       headers: this.getHeaders()

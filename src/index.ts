@@ -76,6 +76,16 @@ export type RecommendationOptions = {
   limit?: number;
 };
 
+export type AutoRecommendationsOptions = {
+  userId: number | string;
+  contextId?: string; // optional: apply the same context filters while filling auto sections
+  limit?: number; // quantity per section
+  cursor?: string; // pass the last next_cursor returned by the API
+  windowDays?: number; // optional override; API may choose to honor cursor continuity
+  candidateLimit?: number; // optional tuning
+  servedCap?: number; // optional tuning
+};
+
 export type DeleteItemInput = {
   itemId: string | number;
 };
@@ -117,6 +127,23 @@ export type RecommendationsResponse = {
     metadata?: Record<string, any>;
     embedding?: number[];
   }>;
+  quantity?: number;
+  excluded_viewed_items?: {
+    value: number | null;
+    unit: string;
+    interval: string | null;
+  } | null;
+  processing_time_ms?: number;
+
+  // NEW: mode=auto support (backwards compatible)
+  mode?: "auto" | "single" | string;
+  section?: {
+    section_id: string;
+    title: string;
+    reason: Record<string, any>;
+  } | null;
+  next_cursor?: string | null;
+  done?: boolean;
 };
 
 // Legacy type for backwards compatibility
@@ -180,7 +207,10 @@ export class NeuronSDK {
   private registerLifecycleFlush() {
     if (this.lifecycleListenersRegistered) return;
 
-    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.addEventListener === "function"
+    ) {
       const handler = () => {
         void this.flushEvents({useBeacon: true});
       };
@@ -188,7 +218,10 @@ export class NeuronSDK {
       window.addEventListener("beforeunload", handler);
       window.addEventListener("pagehide", handler);
       window.addEventListener("visibilitychange", () => {
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        if (
+          typeof document !== "undefined" &&
+          document.visibilityState === "hidden"
+        ) {
           handler();
         }
       });
@@ -413,7 +446,8 @@ export class NeuronSDK {
   }
 
   private trimBufferIfNeeded(incomingCount = 0) {
-    const overflow = this.eventBuffer.length + incomingCount - this.maxBufferedEvents;
+    const overflow =
+      this.eventBuffer.length + incomingCount - this.maxBufferedEvents;
     if (overflow > 0) {
       const dropped = this.eventBuffer.splice(0, overflow);
       if (logger.shouldLog("WARN")) {
@@ -424,7 +458,9 @@ export class NeuronSDK {
       }
       dropped.forEach((evt) =>
         evt.reject(
-          new Error("Event dropped because the buffer exceeded maxBufferedEvents")
+          new Error(
+            "Event dropped because the buffer exceeded maxBufferedEvents"
+          )
         )
       );
     }
@@ -523,10 +559,13 @@ export class NeuronSDK {
         if (!this.arrayBatchingRejected && err instanceof SDKHttpError) {
           this.arrayBatchingRejected = true;
           if (logger.shouldLog("WARN")) {
-            logger.warn("Array payload rejected, falling back to single-event sends", {
-              status: err.status,
-              statusText: err.statusText,
-            });
+            logger.warn(
+              "Array payload rejected, falling back to single-event sends",
+              {
+                status: err.status,
+                statusText: err.statusText,
+              }
+            );
           }
           return this.sendIndividually(batch, options);
         }
@@ -645,7 +684,10 @@ export class NeuronSDK {
 
   /**
    * Get recommendations for a user, optionally with a context ID and limit
-   * GET /recommendations?user_id=...&context_id=...&limit=...
+   * GET /recommendations?user_id=...&context_id=...&quantity=...
+   *
+   * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
+   * and map it to `quantity` for backwards compatibility.
    */
   public async getRecommendations(
     options: RecommendationOptions
@@ -658,7 +700,53 @@ export class NeuronSDK {
     const url = new URL(`${this.baseUrl}/recommendations`);
     url.searchParams.set("user_id", String(userId));
     if (contextId) url.searchParams.set("context_id", contextId);
-    if (typeof limit === "number") url.searchParams.set("limit", String(limit));
+    if (typeof limit === "number")
+      url.searchParams.set("quantity", String(limit));
+
+    return this.request<RecommendationsResponse>(url.toString(), {
+      method: "GET",
+      headers: this.getHeaders(),
+    });
+  }
+
+  /**
+   * NEW: Get the next auto-generated recommendation section.
+   *
+   * Call this when the user scrolls and you want a new section appended.
+   * Pass the returned `next_cursor` back into the next call to continue the sequence.
+   *
+   * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+   */
+  public async getAutoRecommendations(
+    options: AutoRecommendationsOptions
+  ): Promise<RecommendationsResponse> {
+    const {
+      userId,
+      contextId,
+      limit,
+      cursor,
+      windowDays,
+      candidateLimit,
+      servedCap,
+    } = options;
+
+    if (typeof userId !== "number" && typeof userId !== "string") {
+      throw new Error("userId must be a string or number");
+    }
+
+    const url = new URL(`${this.baseUrl}/recommendations`);
+    url.searchParams.set("mode", "auto");
+    url.searchParams.set("user_id", String(userId));
+    if (contextId) url.searchParams.set("context_id", contextId);
+    if (typeof limit === "number")
+      url.searchParams.set("quantity", String(limit));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    if (typeof windowDays === "number")
+      url.searchParams.set("window_days", String(windowDays));
+    if (typeof candidateLimit === "number")
+      url.searchParams.set("candidate_limit", String(candidateLimit));
+    if (typeof servedCap === "number")
+      url.searchParams.set("served_cap", String(servedCap));
 
     return this.request<RecommendationsResponse>(url.toString(), {
       method: "GET",

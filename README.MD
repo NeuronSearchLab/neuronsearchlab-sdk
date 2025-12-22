@@ -16,7 +16,7 @@ import {NeuronSDK, configureLogger} from "@neuronsearchlab/sdk";
 configureLogger({level: "INFO"});
 
 const sdk = new NeuronSDK({
-  baseUrl: "https://api.neuronsearchlab.com/v1",
+  baseUrl: "https://api.neuronsearchlab.com",
   accessToken: process.env.NEURON_API_TOKEN!,
   // Optional batching controls (defaults shown)
   collateWindowSeconds: 3,

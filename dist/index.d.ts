@@ -123,6 +123,15 @@ type RecommendationOptions = {
     contextId?: string;
     limit?: number;
 };
+type AutoRecommendationsOptions = {
+    userId: number | string;
+    contextId?: string;
+    limit?: number;
+    cursor?: string;
+    windowDays?: number;
+    candidateLimit?: number;
+    servedCap?: number;
+};
 type DeleteItemInput = {
     itemId: string | number;
 };
@@ -161,6 +170,21 @@ type RecommendationsResponse = {
         metadata?: Record<string, any>;
         embedding?: number[];
     }>;
+    quantity?: number;
+    excluded_viewed_items?: {
+        value: number | null;
+        unit: string;
+        interval: string | null;
+    } | null;
+    processing_time_ms?: number;
+    mode?: "auto" | "single" | string;
+    section?: {
+        section_id: string;
+        title: string;
+        reason: Record<string, any>;
+    } | null;
+    next_cursor?: string | null;
+    done?: boolean;
 };
 type Recommendation = {
     itemId: number | string;
@@ -235,9 +259,21 @@ declare class NeuronSDK {
     deleteItems<T = DeleteItemsResponse>(items: DeleteItemInput | DeleteItemInput[]): Promise<T>;
     /**
      * Get recommendations for a user, optionally with a context ID and limit
-     * GET /recommendations?user_id=...&context_id=...&limit=...
+     * GET /recommendations?user_id=...&context_id=...&quantity=...
+     *
+     * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
+     * and map it to `quantity` for backwards compatibility.
      */
     getRecommendations(options: RecommendationOptions): Promise<RecommendationsResponse>;
+    /**
+     * NEW: Get the next auto-generated recommendation section.
+     *
+     * Call this when the user scrolls and you want a new section appended.
+     * Pass the returned `next_cursor` back into the next call to continue the sequence.
+     *
+     * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+     */
+    getAutoRecommendations(options: AutoRecommendationsOptions): Promise<RecommendationsResponse>;
 }
 
-export { type APIErrorBody, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type Recommendation, type RecommendationOptions, type RecommendationsResponse, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };
+export { type APIErrorBody, type AutoRecommendationsOptions, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type Recommendation, type RecommendationOptions, type RecommendationsResponse, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };
