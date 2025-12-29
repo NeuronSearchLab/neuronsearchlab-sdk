@@ -142,6 +142,17 @@ type DeleteItemsResponse = {
     deletedCount?: number;
     processing_time_ms?: number;
 };
+type PatchItemInput = {
+    itemId: string | number;
+    active?: boolean;
+    [k: string]: unknown;
+};
+type PatchItemResponse = {
+    message: string;
+    itemId: string | number;
+    active?: boolean;
+    processing_time_ms?: number;
+};
 type RecommendationsResponse = {
     message?: string;
     embedding_info?: {
@@ -230,7 +241,6 @@ declare class NeuronSDK {
     private postEvents;
     /**
      * Track an existing event occurrence.
-     * This does NOT create event definitions; it records that a pre-defined event happened.
      * POST /events
      */
     trackEvent<T = {
@@ -253,27 +263,32 @@ declare class NeuronSDK {
         itemId: number | string;
     }>(data: ItemUpsertPayload): Promise<T>;
     /**
+     * ✅ NEW: Patch (partial update) a single item.
+     * PATCH /items/{item_id}
+     *
+     * Today supports: { active: true/false }
+     * Future-proof: send any subset of fields; server decides what it supports.
+     */
+    patchItem<T = PatchItemResponse>(input: PatchItemInput): Promise<T>;
+    /**
+     * Convenience helper: enable/disable item without manually building patch object.
+     */
+    setItemActive<T = PatchItemResponse>(itemId: string | number, active: boolean): Promise<T>;
+    /**
      * Delete one or more items.
      * DELETE /items
      */
     deleteItems<T = DeleteItemsResponse>(items: DeleteItemInput | DeleteItemInput[]): Promise<T>;
     /**
-     * Get recommendations for a user, optionally with a context ID and limit
+     * Get recommendations for a user
      * GET /recommendations?user_id=...&context_id=...&quantity=...
-     *
-     * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
-     * and map it to `quantity` for backwards compatibility.
      */
     getRecommendations(options: RecommendationOptions): Promise<RecommendationsResponse>;
     /**
-     * NEW: Get the next auto-generated recommendation section.
-     *
-     * Call this when the user scrolls and you want a new section appended.
-     * Pass the returned `next_cursor` back into the next call to continue the sequence.
-     *
+     * Get the next auto-generated recommendation section.
      * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
      */
     getAutoRecommendations(options: AutoRecommendationsOptions): Promise<RecommendationsResponse>;
 }
 
-export { type APIErrorBody, type AutoRecommendationsOptions, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type Recommendation, type RecommendationOptions, type RecommendationsResponse, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };
+export { type APIErrorBody, type AutoRecommendationsOptions, type DeleteItemInput, type DeleteItemsResponse, type ItemUpsertPayload, type LogLevelName as LogLevel, type LoggerConfig, type LoggerTransport, NeuronSDK, type PatchItemInput, type PatchItemResponse, type Recommendation, type RecommendationOptions, type RecommendationsResponse, type SDKConfig, SDKHttpError, SDKTimeoutError, type StructuredLogEntry, type TrackEventPayload, configureLogger, NeuronSDK as default, logger };

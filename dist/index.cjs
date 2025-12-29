@@ -537,7 +537,6 @@ var NeuronSDK = class {
   // ----------------- Public API -----------------
   /**
    * Track an existing event occurrence.
-   * This does NOT create event definitions; it records that a pre-defined event happened.
    * POST /events
    */
   async trackEvent(data) {
@@ -570,6 +569,40 @@ var NeuronSDK = class {
     });
   }
   /**
+   * ✅ NEW: Patch (partial update) a single item.
+   * PATCH /items/{item_id}
+   *
+   * Today supports: { active: true/false }
+   * Future-proof: send any subset of fields; server decides what it supports.
+   */
+  async patchItem(input) {
+    const itemId = input?.itemId;
+    const isValidString = typeof itemId === "string" && itemId.trim().length > 0;
+    const isValidPositiveInteger = typeof itemId === "number" && Number.isInteger(itemId) && itemId > 0;
+    if (!(isValidString || isValidPositiveInteger)) {
+      throw new Error(
+        "itemId is required and must be a UUID string or positive integer"
+      );
+    }
+    const { itemId: _ignore, ...patch } = input;
+    if (!patch || Object.keys(patch).length === 0) {
+      throw new Error(
+        "patchItem requires at least one field to update (e.g. { active: false })"
+      );
+    }
+    return this.request(`/items/${encodeURIComponent(String(itemId))}`, {
+      method: "PATCH",
+      headers: this.getHeaders(),
+      body: JSON.stringify(patch)
+    });
+  }
+  /**
+   * Convenience helper: enable/disable item without manually building patch object.
+   */
+  async setItemActive(itemId, active) {
+    return this.patchItem({ itemId, active });
+  }
+  /**
    * Delete one or more items.
    * DELETE /items
    */
@@ -593,11 +626,8 @@ var NeuronSDK = class {
     });
   }
   /**
-   * Get recommendations for a user, optionally with a context ID and limit
+   * Get recommendations for a user
    * GET /recommendations?user_id=...&context_id=...&quantity=...
-   *
-   * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
-   * and map it to `quantity` for backwards compatibility.
    */
   async getRecommendations(options) {
     const { userId, contextId, limit } = options;
@@ -615,11 +645,7 @@ var NeuronSDK = class {
     });
   }
   /**
-   * NEW: Get the next auto-generated recommendation section.
-   *
-   * Call this when the user scrolls and you want a new section appended.
-   * Pass the returned `next_cursor` back into the next call to continue the sequence.
-   *
+   * Get the next auto-generated recommendation section.
    * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
    */
   async getAutoRecommendations(options) {
