@@ -98,6 +98,21 @@ export type DeleteItemsResponse = {
   processing_time_ms?: number;
 };
 
+// ✅ NEW: PATCH payload + response
+export type PatchItemInput = {
+  itemId: string | number;
+  // Partial, so you can extend later (name/metadata/etc.)
+  active?: boolean;
+  [k: string]: unknown;
+};
+
+export type PatchItemResponse = {
+  message: string;
+  itemId: string | number;
+  active?: boolean;
+  processing_time_ms?: number;
+};
+
 // Updated response type to match API
 export type RecommendationsResponse = {
   message?: string;
@@ -195,6 +210,7 @@ export class NeuronSDK {
     this.maxBufferedEvents = config.maxBufferedEvents ?? 5000;
     this.maxEventRetries = config.maxEventRetries ?? 5;
     this.disableArrayBatching = Boolean(config.disableArrayBatching);
+
     if (!this.fetchImpl) {
       throw new Error(
         "fetch is not available in this environment. Provide config.fetchImpl (e.g., undici or node-fetch)."
@@ -316,7 +332,7 @@ export class NeuronSDK {
           try {
             return JSON.parse(text) as T;
           } catch {
-            return text as unknown as T; // non-JSON payloads
+            return text as unknown as T;
           }
         }
 
@@ -333,6 +349,7 @@ export class NeuronSDK {
             responseBody: raw,
           });
         }
+
         let body: APIErrorBody | string | undefined;
         try {
           body = raw ? (JSON.parse(raw) as APIErrorBody) : undefined;
@@ -347,6 +364,7 @@ export class NeuronSDK {
             retryAfter && !Number.isNaN(Number(retryAfter))
               ? Number(retryAfter) * 1000
               : this.backoffMs(attempt);
+
           if (logger.shouldLog("INFO")) {
             logger.info("Retrying request after HTTP status", {
               method,
@@ -385,6 +403,7 @@ export class NeuronSDK {
             await this.sleep(this.backoffMs(attempt));
             continue;
           }
+
           logger.error("Request aborted after max retries", {
             method,
             url,
@@ -395,7 +414,6 @@ export class NeuronSDK {
           throw new SDKTimeoutError(this.timeoutMs);
         }
 
-        // transient network errors
         if (attempt < this.maxRetries) {
           attempt++;
           if (logger.shouldLog("WARN")) {
@@ -410,6 +428,7 @@ export class NeuronSDK {
           await this.sleep(this.backoffMs(attempt));
           continue;
         }
+
         logger.error("Request failed", {
           method,
           url,
@@ -423,7 +442,6 @@ export class NeuronSDK {
   }
 
   private backoffMs(attempt: number) {
-    // 300ms, 600ms, 1200ms ... + jitter
     const base = 300 * Math.pow(2, attempt - 1);
     const jitter = Math.random() * 200;
     return base + jitter;
@@ -495,6 +513,7 @@ export class NeuronSDK {
       return this.pendingFlushPromise ?? Promise.resolve();
     }
     this.isFlushing = true;
+
     const promise = (async () => {
       while (this.eventBuffer.length > 0) {
         const batch = this.eventBuffer.splice(0, this.maxBatchSize);
@@ -507,6 +526,7 @@ export class NeuronSDK {
           this.trimBufferIfNeeded();
           this.flushRetryCount += 1;
           const willRetry = this.flushRetryCount <= this.maxEventRetries;
+
           if (logger.shouldLog(willRetry ? "WARN" : "ERROR")) {
             logger[willRetry ? "warn" : "error"](
               willRetry
@@ -520,6 +540,7 @@ export class NeuronSDK {
               }
             );
           }
+
           if (willRetry) {
             this.scheduleFlush(this.backoffMs(this.flushRetryCount));
           } else {
@@ -537,6 +558,7 @@ export class NeuronSDK {
       this.isFlushing = false;
       this.pendingFlushPromise = null;
     });
+
     return this.pendingFlushPromise;
   }
 
@@ -601,7 +623,6 @@ export class NeuronSDK {
 
   /**
    * Track an existing event occurrence.
-   * This does NOT create event definitions; it records that a pre-defined event happened.
    * POST /events
    */
   public async trackEvent<T = {success: true; id?: number}>(
@@ -650,6 +671,55 @@ export class NeuronSDK {
   }
 
   /**
+   * ✅ NEW: Patch (partial update) a single item.
+   * PATCH /items/{item_id}
+   *
+   * Today supports: { active: true/false }
+   * Future-proof: send any subset of fields; server decides what it supports.
+   */
+  public async patchItem<T = PatchItemResponse>(
+    input: PatchItemInput
+  ): Promise<T> {
+    const itemId = input?.itemId;
+
+    const isValidString =
+      typeof itemId === "string" && itemId.trim().length > 0;
+    const isValidPositiveInteger =
+      typeof itemId === "number" && Number.isInteger(itemId) && itemId > 0;
+
+    if (!(isValidString || isValidPositiveInteger)) {
+      throw new Error(
+        "itemId is required and must be a UUID string or positive integer"
+      );
+    }
+
+    // Build PATCH body (exclude itemId)
+    const {itemId: _ignore, ...patch} = input;
+
+    if (!patch || Object.keys(patch).length === 0) {
+      throw new Error(
+        "patchItem requires at least one field to update (e.g. { active: false })"
+      );
+    }
+
+    return this.request<T>(`/items/${encodeURIComponent(String(itemId))}`, {
+      method: "PATCH",
+      headers: this.getHeaders(),
+      body: JSON.stringify(patch),
+    });
+  }
+
+  /**
+   * Convenience helper: enable/disable item without manually building patch object.
+   */
+  public async setItemActive<T = PatchItemResponse>(
+    itemId: string | number,
+    active: boolean
+  ): Promise<T> {
+    return this.patchItem<T>({itemId, active});
+  }
+
+  /**
    * Delete one or more items.
    * DELETE /items
    */
@@ -683,11 +753,8 @@ export class NeuronSDK {
   }
 
   /**
-   * Get recommendations for a user, optionally with a context ID and limit
+   * Get recommendations for a user
    * GET /recommendations?user_id=...&context_id=...&quantity=...
-   *
-   * NOTE: Your API expects `quantity` (not `limit`). We accept `limit` in the SDK
-   * and map it to `quantity` for backwards compatibility.
    */
   public async getRecommendations(
     options: RecommendationOptions
@@ -710,11 +777,7 @@ export class NeuronSDK {
   }
 
   /**
-   * NEW: Get the next auto-generated recommendation section.
-   *
-   * Call this when the user scrolls and you want a new section appended.
-   * Pass the returned `next_cursor` back into the next call to continue the sequence.
-   *
+   * Get the next auto-generated recommendation section.
    * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
    */
   public async getAutoRecommendations(
