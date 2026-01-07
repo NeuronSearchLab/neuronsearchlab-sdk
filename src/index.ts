@@ -26,9 +26,24 @@ export type SDKConfig = {
    * ✅ NEW: request_id propagation
    * If true (default), the SDK will remember the latest request_id returned by
    * /recommendations and automatically attach it to subsequent trackEvent calls
-   * (unless you explicitly pass requestId in the event payload).
+   * (unless you explicitly pass requestId/request_id in the event payload).
    */
   propagateRecommendationRequestId?: boolean;
+
+  /**
+   * ✅ NEW: session_id support
+   * If provided, SDK uses this session id for all events unless overridden per-event.
+   * If not provided, SDK auto-creates a session id (stable for the lifetime of the SDK instance).
+   *
+   * You can override later via sdk.setSessionId("...") or per-event via payload sessionId/session_id.
+   */
+  sessionId?: string | null;
+
+  /**
+   * If true (default), SDK auto-creates a sessionId when none is provided.
+   * Set false if you *never* want the SDK to attach session_id automatically.
+   */
+  autoSessionId?: boolean;
 };
 
 export type APIErrorBody = {
@@ -65,7 +80,7 @@ export class SDKTimeoutError extends Error {
 
 // -------- Domain payloads --------
 
-// ✅ Backwards compatible: allow requestId/request_id on event payloads
+// ✅ Backwards compatible: allow requestId/request_id + sessionId/session_id on event payloads
 export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
   userId: number | string;
@@ -74,6 +89,10 @@ export type TrackEventPayload = {
   // optional correlation id (recommended)
   requestId?: string;
   request_id?: string;
+
+  // ✅ NEW: session correlation id (recommended)
+  sessionId?: string;
+  session_id?: string;
 
   [k: string]: unknown;
 };
@@ -195,6 +214,39 @@ type BufferedEvent<T> = {
   enqueueTime: number;
 };
 
+const normalizeOptionalString = (v: unknown): string | null => {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s ? s : null;
+};
+
+const generateSessionId = (): string => {
+  // Prefer Web Crypto UUID if available (browser + modern runtimes)
+  try {
+    const g: any = globalThis as any;
+    if (g?.crypto?.randomUUID && typeof g.crypto.randomUUID === "function") {
+      return g.crypto.randomUUID();
+    }
+  } catch {}
+
+  // Node crypto fallback
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const nodeCrypto = require("crypto");
+    if (nodeCrypto?.randomUUID && typeof nodeCrypto.randomUUID === "function") {
+      return nodeCrypto.randomUUID();
+    }
+    if (nodeCrypto?.randomBytes) {
+      return `sess_${nodeCrypto.randomBytes(16).toString("hex")}`;
+    }
+  } catch {}
+
+  // Last resort
+  return `sess_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
 export class NeuronSDK {
   private baseUrl: string;
   private accessToken: string;
@@ -218,6 +270,10 @@ export class NeuronSDK {
   private propagateRecommendationRequestId: boolean;
   private lastRecommendationRequestId: string | null = null;
 
+  // ✅ session_id state
+  private autoSessionId: boolean;
+  private sessionId: string | null = null;
+
   constructor(config: SDKConfig) {
     if (!config.baseUrl || !config.accessToken) {
       throw new Error("baseUrl and accessToken are required");
@@ -235,6 +291,14 @@ export class NeuronSDK {
 
     this.propagateRecommendationRequestId =
       config.propagateRecommendationRequestId ?? true;
+
+    // ✅ session config
+    this.autoSessionId = config.autoSessionId ?? true;
+    this.sessionId = normalizeOptionalString(config.sessionId);
+
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
 
     if (!this.fetchImpl) {
       throw new Error(
@@ -296,6 +360,25 @@ export class NeuronSDK {
    */
   public getRequestId(): string | null {
     return this.lastRecommendationRequestId;
+  }
+
+  /**
+   * ✅ NEW: Manually set/override the current session id
+   * - If set to null/blank, and autoSessionId=true, a new session id will be generated.
+   * - If autoSessionId=false, session id will remain null and no session_id is attached unless provided per-event.
+   */
+  public setSessionId(sessionId: string | null) {
+    this.sessionId = normalizeOptionalString(sessionId);
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
+  }
+
+  /**
+   * ✅ NEW: Read the current SDK session id (may be null if autoSessionId=false)
+   */
+  public getSessionId(): string | null {
+    return this.sessionId;
   }
 
   private getHeaders(extra?: HeadersInit): HeadersInit {
@@ -696,9 +779,29 @@ export class NeuronSDK {
         ? this.lastRecommendationRequestId ?? undefined
         : undefined;
 
+    // ✅ session_id: use event-provided value if present, else SDK sessionId (auto-created unless disabled)
+    const existingSid =
+      typeof (data as any).sessionId === "string"
+        ? (data as any).sessionId
+        : typeof (data as any).session_id === "string"
+        ? (data as any).session_id
+        : undefined;
+
+    // If autoSessionId enabled but we don't yet have one (edge: setSessionId(null) with autoSessionId=false toggled later)
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
+
+    const sidToAttach =
+      !existingSid && this.sessionId ? this.sessionId : undefined;
+
     const payload = {
       ...data,
+
+      // normalize + attach
       ...(ridToAttach ? {request_id: ridToAttach} : {}),
+      ...(sidToAttach ? {session_id: sidToAttach} : {}),
+
       client_ts: new Date().toISOString(),
     };
 

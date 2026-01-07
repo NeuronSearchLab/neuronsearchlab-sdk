@@ -1,3 +1,10 @@
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
 // src/logger.ts
 var LEVEL_VALUES = {
   TRACE: 10,
@@ -144,6 +151,31 @@ var SDKTimeoutError = class extends Error {
     this.name = "SDKTimeoutError";
   }
 };
+var normalizeOptionalString = (v) => {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s ? s : null;
+};
+var generateSessionId = () => {
+  try {
+    const g = globalThis;
+    if (g?.crypto?.randomUUID && typeof g.crypto.randomUUID === "function") {
+      return g.crypto.randomUUID();
+    }
+  } catch {
+  }
+  try {
+    const nodeCrypto = __require("crypto");
+    if (nodeCrypto?.randomUUID && typeof nodeCrypto.randomUUID === "function") {
+      return nodeCrypto.randomUUID();
+    }
+    if (nodeCrypto?.randomBytes) {
+      return `sess_${nodeCrypto.randomBytes(16).toString("hex")}`;
+    }
+  } catch {
+  }
+  return `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+};
 var NeuronSDK = class {
   constructor(config) {
     this.eventBuffer = [];
@@ -154,6 +186,7 @@ var NeuronSDK = class {
     this.lifecycleListenersRegistered = false;
     this.arrayBatchingRejected = false;
     this.lastRecommendationRequestId = null;
+    this.sessionId = null;
     if (!config.baseUrl || !config.accessToken) {
       throw new Error("baseUrl and accessToken are required");
     }
@@ -168,6 +201,11 @@ var NeuronSDK = class {
     this.maxEventRetries = config.maxEventRetries ?? 5;
     this.disableArrayBatching = Boolean(config.disableArrayBatching);
     this.propagateRecommendationRequestId = config.propagateRecommendationRequestId ?? true;
+    this.autoSessionId = config.autoSessionId ?? true;
+    this.sessionId = normalizeOptionalString(config.sessionId);
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
     if (!this.fetchImpl) {
       throw new Error(
         "fetch is not available in this environment. Provide config.fetchImpl (e.g., undici or node-fetch)."
@@ -212,6 +250,23 @@ var NeuronSDK = class {
    */
   getRequestId() {
     return this.lastRecommendationRequestId;
+  }
+  /**
+   * ✅ NEW: Manually set/override the current session id
+   * - If set to null/blank, and autoSessionId=true, a new session id will be generated.
+   * - If autoSessionId=false, session id will remain null and no session_id is attached unless provided per-event.
+   */
+  setSessionId(sessionId) {
+    this.sessionId = normalizeOptionalString(sessionId);
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
+  }
+  /**
+   * ✅ NEW: Read the current SDK session id (may be null if autoSessionId=false)
+   */
+  getSessionId() {
+    return this.sessionId;
   }
   getHeaders(extra) {
     return {
@@ -531,9 +586,16 @@ var NeuronSDK = class {
     }
     const existingRid = typeof data.requestId === "string" ? data.requestId : typeof data.request_id === "string" ? data.request_id : void 0;
     const ridToAttach = !existingRid && this.propagateRecommendationRequestId ? this.lastRecommendationRequestId ?? void 0 : void 0;
+    const existingSid = typeof data.sessionId === "string" ? data.sessionId : typeof data.session_id === "string" ? data.session_id : void 0;
+    if (this.autoSessionId && !this.sessionId) {
+      this.sessionId = generateSessionId();
+    }
+    const sidToAttach = !existingSid && this.sessionId ? this.sessionId : void 0;
     const payload = {
       ...data,
+      // normalize + attach
       ...ridToAttach ? { request_id: ridToAttach } : {},
+      ...sidToAttach ? { session_id: sidToAttach } : {},
       client_ts: (/* @__PURE__ */ new Date()).toISOString()
     };
     return this.enqueueEvent(payload);

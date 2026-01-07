@@ -88,9 +88,22 @@ type SDKConfig = {
      * ✅ NEW: request_id propagation
      * If true (default), the SDK will remember the latest request_id returned by
      * /recommendations and automatically attach it to subsequent trackEvent calls
-     * (unless you explicitly pass requestId in the event payload).
+     * (unless you explicitly pass requestId/request_id in the event payload).
      */
     propagateRecommendationRequestId?: boolean;
+    /**
+     * ✅ NEW: session_id support
+     * If provided, SDK uses this session id for all events unless overridden per-event.
+     * If not provided, SDK auto-creates a session id (stable for the lifetime of the SDK instance).
+     *
+     * You can override later via sdk.setSessionId("...") or per-event via payload sessionId/session_id.
+     */
+    sessionId?: string | null;
+    /**
+     * If true (default), SDK auto-creates a sessionId when none is provided.
+     * Set false if you *never* want the SDK to attach session_id automatically.
+     */
+    autoSessionId?: boolean;
 };
 type APIErrorBody = {
     error?: string;
@@ -119,6 +132,8 @@ type TrackEventPayload = {
     itemId: number | string;
     requestId?: string;
     request_id?: string;
+    sessionId?: string;
+    session_id?: string;
     [k: string]: unknown;
 };
 type ItemUpsertPayload = {
@@ -233,6 +248,8 @@ declare class NeuronSDK {
     private arrayBatchingRejected;
     private propagateRecommendationRequestId;
     private lastRecommendationRequestId;
+    private autoSessionId;
+    private sessionId;
     constructor(config: SDKConfig);
     private registerLifecycleFlush;
     setAccessToken(token: string): void;
@@ -247,6 +264,16 @@ declare class NeuronSDK {
      * ✅ NEW: Read the last request_id captured from /recommendations
      */
     getRequestId(): string | null;
+    /**
+     * ✅ NEW: Manually set/override the current session id
+     * - If set to null/blank, and autoSessionId=true, a new session id will be generated.
+     * - If autoSessionId=false, session id will remain null and no session_id is attached unless provided per-event.
+     */
+    setSessionId(sessionId: string | null): void;
+    /**
+     * ✅ NEW: Read the current SDK session id (may be null if autoSessionId=false)
+     */
+    getSessionId(): string | null;
     private getHeaders;
     private request;
     private backoffMs;
