@@ -21,6 +21,14 @@ export type SDKConfig = {
   maxBufferedEvents?: number; // drop oldest events past this limit; default 5000
   maxEventRetries?: number; // max send retries for buffered events after network failure; default 5
   disableArrayBatching?: boolean; // force single-event sends (used after server rejects arrays)
+
+  /**
+   * ✅ NEW: request_id propagation
+   * If true (default), the SDK will remember the latest request_id returned by
+   * /recommendations and automatically attach it to subsequent trackEvent calls
+   * (unless you explicitly pass requestId in the event payload).
+   */
+  propagateRecommendationRequestId?: boolean;
 };
 
 export type APIErrorBody = {
@@ -56,10 +64,17 @@ export class SDKTimeoutError extends Error {
 }
 
 // -------- Domain payloads --------
+
+// ✅ Backwards compatible: allow requestId/request_id on event payloads
 export type TrackEventPayload = {
   eventId: number; // numeric, defined in admin UI
   userId: number | string;
   itemId: number | string; // allow UUIDs or numeric IDs
+
+  // optional correlation id (recommended)
+  requestId?: string;
+  request_id?: string;
+
   [k: string]: unknown;
 };
 
@@ -101,7 +116,6 @@ export type DeleteItemsResponse = {
 // ✅ NEW: PATCH payload + response
 export type PatchItemInput = {
   itemId: string | number;
-  // Partial, so you can extend later (name/metadata/etc.)
   active?: boolean;
   [k: string]: unknown;
 };
@@ -113,9 +127,13 @@ export type PatchItemResponse = {
   processing_time_ms?: number;
 };
 
-// Updated response type to match API
+// Updated response type to match API (incl. request_id)
 export type RecommendationsResponse = {
   message?: string;
+
+  // ✅ NEW: correlation id from API
+  request_id?: string;
+
   embedding_info?: {
     source: string;
     used_default: boolean;
@@ -150,7 +168,7 @@ export type RecommendationsResponse = {
   } | null;
   processing_time_ms?: number;
 
-  // NEW: mode=auto support (backwards compatible)
+  // mode=auto support (backwards compatible)
   mode?: "auto" | "single" | string;
   section?: {
     section_id: string;
@@ -196,6 +214,10 @@ export class NeuronSDK {
   private lifecycleListenersRegistered = false;
   private arrayBatchingRejected = false;
 
+  // ✅ request_id propagation state
+  private propagateRecommendationRequestId: boolean;
+  private lastRecommendationRequestId: string | null = null;
+
   constructor(config: SDKConfig) {
     if (!config.baseUrl || !config.accessToken) {
       throw new Error("baseUrl and accessToken are required");
@@ -210,6 +232,9 @@ export class NeuronSDK {
     this.maxBufferedEvents = config.maxBufferedEvents ?? 5000;
     this.maxEventRetries = config.maxEventRetries ?? 5;
     this.disableArrayBatching = Boolean(config.disableArrayBatching);
+
+    this.propagateRecommendationRequestId =
+      config.propagateRecommendationRequestId ?? true;
 
     if (!this.fetchImpl) {
       throw new Error(
@@ -255,6 +280,22 @@ export class NeuronSDK {
 
   public setTimeout(ms: number) {
     this.timeoutMs = ms;
+  }
+
+  /**
+   * ✅ NEW: Let callers manually set/override the current request_id
+   * (useful if you want to correlate a whole page session yourself).
+   */
+  public setRequestId(requestId: string | null) {
+    this.lastRecommendationRequestId =
+      requestId && requestId.trim() ? requestId.trim() : null;
+  }
+
+  /**
+   * ✅ NEW: Read the last request_id captured from /recommendations
+   */
+  public getRequestId(): string | null {
+    return this.lastRecommendationRequestId;
   }
 
   private getHeaders(extra?: HeadersInit): HeadersInit {
@@ -639,8 +680,25 @@ export class NeuronSDK {
       );
     }
 
+    // ✅ attach request_id if:
+    // - propagation enabled
+    // - caller didn't provide one
+    // - we have one captured from /recommendations
+    const existingRid =
+      typeof (data as any).requestId === "string"
+        ? (data as any).requestId
+        : typeof (data as any).request_id === "string"
+        ? (data as any).request_id
+        : undefined;
+
+    const ridToAttach =
+      !existingRid && this.propagateRecommendationRequestId
+        ? this.lastRecommendationRequestId ?? undefined
+        : undefined;
+
     const payload = {
       ...data,
+      ...(ridToAttach ? {request_id: ridToAttach} : {}),
       client_ts: new Date().toISOString(),
     };
 
@@ -673,9 +731,6 @@ export class NeuronSDK {
   /**
    * ✅ NEW: Patch (partial update) a single item.
    * PATCH /items/{item_id}
-   *
-   * Today supports: { active: true/false }
-   * Future-proof: send any subset of fields; server decides what it supports.
    */
   public async patchItem<T = PatchItemResponse>(
     input: PatchItemInput
@@ -710,7 +765,7 @@ export class NeuronSDK {
   }
 
   /**
-   * Convenience helper: enable/disable item without manually building patch object.
+   * Convenience helper: enable/disable item
    */
   public async setItemActive<T = PatchItemResponse>(
     itemId: string | number,
@@ -755,6 +810,8 @@ export class NeuronSDK {
   /**
    * Get recommendations for a user
    * GET /recommendations?user_id=...&context_id=...&quantity=...
+   *
+   * ✅ Captures request_id for correlation if present.
    */
   public async getRecommendations(
     options: RecommendationOptions
@@ -770,15 +827,23 @@ export class NeuronSDK {
     if (typeof limit === "number")
       url.searchParams.set("quantity", String(limit));
 
-    return this.request<RecommendationsResponse>(url.toString(), {
+    const res = await this.request<RecommendationsResponse>(url.toString(), {
       method: "GET",
       headers: this.getHeaders(),
     });
+
+    if (this.propagateRecommendationRequestId && res?.request_id) {
+      this.lastRecommendationRequestId = res.request_id;
+    }
+
+    return res;
   }
 
   /**
    * Get the next auto-generated recommendation section.
    * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+   *
+   * ✅ Captures request_id for correlation if present.
    */
   public async getAutoRecommendations(
     options: AutoRecommendationsOptions
@@ -811,10 +876,16 @@ export class NeuronSDK {
     if (typeof servedCap === "number")
       url.searchParams.set("served_cap", String(servedCap));
 
-    return this.request<RecommendationsResponse>(url.toString(), {
+    const res = await this.request<RecommendationsResponse>(url.toString(), {
       method: "GET",
       headers: this.getHeaders(),
     });
+
+    if (this.propagateRecommendationRequestId && res?.request_id) {
+      this.lastRecommendationRequestId = res.request_id;
+    }
+
+    return res;
   }
 }
 
