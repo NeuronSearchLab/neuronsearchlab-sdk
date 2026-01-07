@@ -84,6 +84,13 @@ type SDKConfig = {
     maxBufferedEvents?: number;
     maxEventRetries?: number;
     disableArrayBatching?: boolean;
+    /**
+     * ✅ NEW: request_id propagation
+     * If true (default), the SDK will remember the latest request_id returned by
+     * /recommendations and automatically attach it to subsequent trackEvent calls
+     * (unless you explicitly pass requestId in the event payload).
+     */
+    propagateRecommendationRequestId?: boolean;
 };
 type APIErrorBody = {
     error?: string;
@@ -110,6 +117,8 @@ type TrackEventPayload = {
     eventId: number;
     userId: number | string;
     itemId: number | string;
+    requestId?: string;
+    request_id?: string;
     [k: string]: unknown;
 };
 type ItemUpsertPayload = {
@@ -155,6 +164,7 @@ type PatchItemResponse = {
 };
 type RecommendationsResponse = {
     message?: string;
+    request_id?: string;
     embedding_info?: {
         source: string;
         used_default: boolean;
@@ -221,11 +231,22 @@ declare class NeuronSDK {
     private flushRetryCount;
     private lifecycleListenersRegistered;
     private arrayBatchingRejected;
+    private propagateRecommendationRequestId;
+    private lastRecommendationRequestId;
     constructor(config: SDKConfig);
     private registerLifecycleFlush;
     setAccessToken(token: string): void;
     setBaseUrl(url: string): void;
     setTimeout(ms: number): void;
+    /**
+     * ✅ NEW: Let callers manually set/override the current request_id
+     * (useful if you want to correlate a whole page session yourself).
+     */
+    setRequestId(requestId: string | null): void;
+    /**
+     * ✅ NEW: Read the last request_id captured from /recommendations
+     */
+    getRequestId(): string | null;
     private getHeaders;
     private request;
     private backoffMs;
@@ -265,13 +286,10 @@ declare class NeuronSDK {
     /**
      * ✅ NEW: Patch (partial update) a single item.
      * PATCH /items/{item_id}
-     *
-     * Today supports: { active: true/false }
-     * Future-proof: send any subset of fields; server decides what it supports.
      */
     patchItem<T = PatchItemResponse>(input: PatchItemInput): Promise<T>;
     /**
-     * Convenience helper: enable/disable item without manually building patch object.
+     * Convenience helper: enable/disable item
      */
     setItemActive<T = PatchItemResponse>(itemId: string | number, active: boolean): Promise<T>;
     /**
@@ -282,11 +300,15 @@ declare class NeuronSDK {
     /**
      * Get recommendations for a user
      * GET /recommendations?user_id=...&context_id=...&quantity=...
+     *
+     * ✅ Captures request_id for correlation if present.
      */
     getRecommendations(options: RecommendationOptions): Promise<RecommendationsResponse>;
     /**
      * Get the next auto-generated recommendation section.
      * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+     *
+     * ✅ Captures request_id for correlation if present.
      */
     getAutoRecommendations(options: AutoRecommendationsOptions): Promise<RecommendationsResponse>;
 }

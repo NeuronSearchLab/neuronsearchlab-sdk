@@ -184,6 +184,7 @@ var NeuronSDK = class {
     this.flushRetryCount = 0;
     this.lifecycleListenersRegistered = false;
     this.arrayBatchingRejected = false;
+    this.lastRecommendationRequestId = null;
     if (!config.baseUrl || !config.accessToken) {
       throw new Error("baseUrl and accessToken are required");
     }
@@ -197,6 +198,7 @@ var NeuronSDK = class {
     this.maxBufferedEvents = config.maxBufferedEvents ?? 5e3;
     this.maxEventRetries = config.maxEventRetries ?? 5;
     this.disableArrayBatching = Boolean(config.disableArrayBatching);
+    this.propagateRecommendationRequestId = config.propagateRecommendationRequestId ?? true;
     if (!this.fetchImpl) {
       throw new Error(
         "fetch is not available in this environment. Provide config.fetchImpl (e.g., undici or node-fetch)."
@@ -228,6 +230,19 @@ var NeuronSDK = class {
   }
   setTimeout(ms) {
     this.timeoutMs = ms;
+  }
+  /**
+   * ✅ NEW: Let callers manually set/override the current request_id
+   * (useful if you want to correlate a whole page session yourself).
+   */
+  setRequestId(requestId) {
+    this.lastRecommendationRequestId = requestId && requestId.trim() ? requestId.trim() : null;
+  }
+  /**
+   * ✅ NEW: Read the last request_id captured from /recommendations
+   */
+  getRequestId() {
+    return this.lastRecommendationRequestId;
   }
   getHeaders(extra) {
     return {
@@ -545,8 +560,11 @@ var NeuronSDK = class {
         "eventId must be a number; userId and itemId must be a string or number"
       );
     }
+    const existingRid = typeof data.requestId === "string" ? data.requestId : typeof data.request_id === "string" ? data.request_id : void 0;
+    const ridToAttach = !existingRid && this.propagateRecommendationRequestId ? this.lastRecommendationRequestId ?? void 0 : void 0;
     const payload = {
       ...data,
+      ...ridToAttach ? { request_id: ridToAttach } : {},
       client_ts: (/* @__PURE__ */ new Date()).toISOString()
     };
     return this.enqueueEvent(payload);
@@ -571,9 +589,6 @@ var NeuronSDK = class {
   /**
    * ✅ NEW: Patch (partial update) a single item.
    * PATCH /items/{item_id}
-   *
-   * Today supports: { active: true/false }
-   * Future-proof: send any subset of fields; server decides what it supports.
    */
   async patchItem(input) {
     const itemId = input?.itemId;
@@ -597,7 +612,7 @@ var NeuronSDK = class {
     });
   }
   /**
-   * Convenience helper: enable/disable item without manually building patch object.
+   * Convenience helper: enable/disable item
    */
   async setItemActive(itemId, active) {
     return this.patchItem({ itemId, active });
@@ -628,6 +643,8 @@ var NeuronSDK = class {
   /**
    * Get recommendations for a user
    * GET /recommendations?user_id=...&context_id=...&quantity=...
+   *
+   * ✅ Captures request_id for correlation if present.
    */
   async getRecommendations(options) {
     const { userId, contextId, limit } = options;
@@ -639,14 +656,20 @@ var NeuronSDK = class {
     if (contextId) url.searchParams.set("context_id", contextId);
     if (typeof limit === "number")
       url.searchParams.set("quantity", String(limit));
-    return this.request(url.toString(), {
+    const res = await this.request(url.toString(), {
       method: "GET",
       headers: this.getHeaders()
     });
+    if (this.propagateRecommendationRequestId && res?.request_id) {
+      this.lastRecommendationRequestId = res.request_id;
+    }
+    return res;
   }
   /**
    * Get the next auto-generated recommendation section.
    * GET /recommendations?mode=auto&user_id=...&cursor=...&quantity=...
+   *
+   * ✅ Captures request_id for correlation if present.
    */
   async getAutoRecommendations(options) {
     const {
@@ -674,10 +697,14 @@ var NeuronSDK = class {
       url.searchParams.set("candidate_limit", String(candidateLimit));
     if (typeof servedCap === "number")
       url.searchParams.set("served_cap", String(servedCap));
-    return this.request(url.toString(), {
+    const res = await this.request(url.toString(), {
       method: "GET",
       headers: this.getHeaders()
     });
+    if (this.propagateRecommendationRequestId && res?.request_id) {
+      this.lastRecommendationRequestId = res.request_id;
+    }
+    return res;
   }
 };
 var index_default = NeuronSDK;
